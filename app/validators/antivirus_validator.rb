@@ -2,12 +2,14 @@
 
 class AntivirusValidator < ActiveModel::EachValidator
   def validate_each(record, attribute, value)
+    target_attribute = options[:on] || attribute
+
     # Avoid unnecessary scans in case
     # a) the storage backend does not accept the resource
     # b) the attribute has not changed
     storage = Ratonvirus.storage
     return unless storage.accept?(value)
-    return unless storage.changed?(record, attribute)
+    return unless storage.changed?(record, target_attribute)
 
     # Only scan if the scanner is available
     scanner = Ratonvirus.scanner
