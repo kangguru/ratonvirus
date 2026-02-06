@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require "spec_helper_carrierwave"
+require "rails_helper"
 
 describe Ratonvirus::Storage::Carrierwave do
   describe "#changed?" do
@@ -8,12 +8,14 @@ describe Ratonvirus::Storage::Carrierwave do
     let(:attribute) { :file }
 
     it "returns true when attribute is marked as dirty" do
-      expect(record).to receive(:file_changed?).and_return(true)
+      allow(record).to receive(:file_changed?).and_return(true)
+      expect(record).to receive(:file_changed?)
       expect(subject.changed?(record, attribute)).to be(true)
     end
 
     it "returns false when attribute is not marked as dirty" do
-      expect(record).to receive(:file_changed?).and_return(false)
+      allow(record).to receive(:file_changed?).and_return(false)
+      expect(record).to receive(:file_changed?)
       expect(subject.changed?(record, attribute)).to be(false)
     end
   end
@@ -56,6 +58,7 @@ describe Ratonvirus::Storage::Carrierwave do
 
   describe "#asset_path" do
     let(:asset) { double }
+    let(:clean_file) { File.new(ratonvirus_file_fixture("clean_file.pdf"), "r") }
 
     context "when a block is not given" do
       it "does nothing" do
@@ -70,18 +73,42 @@ describe Ratonvirus::Storage::Carrierwave do
       end
 
       it "does not yield with asset.file returning nil" do
-        expect(asset).to receive(:file).and_return(nil)
+        allow(asset).to receive(:file).and_return(nil)
         expect { |b| subject.asset_path(asset, &b) }.not_to yield_control
       end
 
-      it "yields with asset.file.path when a correct resource is given" do
-        file = double
-        path = double
-        expect(asset).to receive(:file).twice.and_return(file)
-        expect(file).to receive(:path).and_return(path)
+      it "yields with with a temp path of the copy of the asset" do
+        expect(asset).to receive(:file).exactly(4).times.and_return(clean_file)
         expect { |b| subject.asset_path(asset, &b) }.to yield_with_args(
-          path
+          %r{/tmp/Ratonvirus[0-9]+-[0-9]+-[0-9a-z]+\.pdf}
         )
+      end
+
+      context "with Fog backend" do
+        let(:record) { Article.new(carrierwave_file: clean_file) }
+        let(:uploader) { record.carrierwave_file }
+        let(:fog_file) do
+          CarrierWave::Storage::Fog::File.new(
+            uploader,
+            uploader.class.storage.new(uploader),
+            uploader.store_path
+          )
+        end
+
+        before do
+          # In order for Fog to read the file, we would have to configure and
+          # stub a lot of stuff to emulate the cloud connection. To make things
+          # easier, just stub the `#read` method for the file and return the
+          # file contents.
+          allow(fog_file).to receive(:read).and_return(clean_file.read)
+        end
+
+        it "yields with with a temp path of the copy of the asset" do
+          expect(asset).to receive(:file).exactly(4).times.and_return(fog_file)
+          expect { |b| subject.asset_path(asset, &b) }.to yield_with_args(
+            %r{/tmp/Ratonvirus[0-9]+-[0-9]+-[0-9a-z]+\.pdf}
+          )
+        end
       end
     end
   end
@@ -93,24 +120,57 @@ describe Ratonvirus::Storage::Carrierwave do
     let(:dir) { double }
 
     before do
-      expect(asset).to receive(:file).and_return(file)
-      expect(file).to receive(:path).and_return(path)
+      allow(asset).to receive(:file).and_return(file)
+      expect(asset).to receive(:file).twice
+      allow(file).to receive(:path).and_return(path)
+      expect(file).to receive(:path)
       expect(asset).to receive(:remove!)
-      expect(File).to receive(:dirname).with(path).and_return(dir)
+      expect(file).to receive(:is_a?).with(::CarrierWave::SanitizedFile)
     end
 
-    context "with correct folder" do
-      it "calls asset.remove! and removes its folder" do
-        expect(File).to receive(:directory?).with(dir).and_return(true)
-        expect(FileUtils).to receive(:remove_dir).with(dir)
+    context "when the asset is a CarrierWave::SanitizedFile" do
+      before do
+        allow(file).to receive(:is_a?)
+          .with(::CarrierWave::SanitizedFile).and_return(true)
+        allow(File).to receive(:dirname).with(path).and_return(dir)
+        expect(File).to receive(:dirname).with(path)
+      end
 
-        subject.asset_remove(asset)
+      context "with correct folder" do
+        it "calls asset.remove! and removes its folder" do
+          allow(File).to receive(:directory?).with(dir).and_return(true)
+          expect(File).to receive(:directory?).with(dir)
+          expect(FileUtils).to receive(:remove_dir).with(dir)
+
+          subject.asset_remove(asset)
+        end
+      end
+
+      context "with incorrect folder" do
+        it "calls asset.remove! and does not remove its folder" do
+          allow(File).to receive(:directory?).with(dir).and_return(false)
+          expect(File).to receive(:directory?).with(dir)
+          expect(FileUtils).not_to receive(:remove_dir)
+
+          subject.asset_remove(asset)
+        end
       end
     end
 
-    context "with incorrect folder" do
+    context "when the asset is a CarrierWave::Storage::Fog::File" do
+      let(:clean_file) { File.new(ratonvirus_file_fixture("clean_file.pdf"), "r") }
+      let(:record) { Article.new(carrierwave_file: clean_file) }
+      let(:uploader) { record.carrierwave_file }
+      let(:file) do
+        CarrierWave::Storage::Fog::File.new(
+          uploader,
+          uploader.class.storage.new(uploader),
+          uploader.store_path
+        )
+      end
+
       it "calls asset.remove! and does not remove its folder" do
-        expect(File).to receive(:directory?).with(dir).and_return(false)
+        expect(File).not_to receive(:directory?)
         expect(FileUtils).not_to receive(:remove_dir)
 
         subject.asset_remove(asset)

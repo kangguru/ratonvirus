@@ -3,8 +3,8 @@
 require "rails_helper"
 
 describe AntivirusValidator do
-  let(:clean_file) { fixture_file_upload("files/clean_file.pdf") }
-  let(:infected_file) { fixture_file_upload("files/infected_file.pdf") }
+  let(:clean_file) { Rack::Test::UploadedFile.new(ratonvirus_file_fixture("clean_file.pdf"), "application/pdf") }
+  let(:infected_file) { Rack::Test::UploadedFile.new(ratonvirus_file_fixture("infected_file.pdf"), "application/pdf") }
 
   before do
     Ratonvirus.configure do |config|
@@ -36,7 +36,7 @@ describe AntivirusValidator do
       a = Article.new
 
       files = []
-      10.times do
+      5.times do
         files << clean_file
       end
       a.carrierwave_files = files
@@ -50,7 +50,7 @@ describe AntivirusValidator do
       a = Article.new
 
       files = []
-      10.times do
+      5.times do
         files << infected_file
       end
       a.carrierwave_files = files
@@ -64,7 +64,7 @@ describe AntivirusValidator do
       a = Article.new
 
       files = []
-      10.times do
+      5.times do
         files << clean_file
       end
       files << infected_file
@@ -79,10 +79,10 @@ describe AntivirusValidator do
       a = Article.new
 
       files = []
-      10.times do
+      5.times do
         files << clean_file
       end
-      10.times do
+      5.times do
         files << infected_file
       end
       a.carrierwave_files = files

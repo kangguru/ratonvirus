@@ -3,21 +3,11 @@
 module Ratonvirus
   module Storage
     class ActiveStorage < Base
-      def changed?(_record, _attribute)
-        # With Active Storage we assume the record is always changed because
-        # there is currently no way to know if the attribute has actually
-        # changed.
-        #
-        # Calling record.changed? will not also work because it is not marked
-        # as dirty in case the Active Storage attachment has changed.
-        #
-        # NOTE:
-        # This should be changed in the future as the `attachment_changes` was
-        # introduced to Rails by this commit:
-        # https://github.com/rails/rails/commit/e8682c5bf051517b0b265e446aa1a7eccfd47bf7
-        #
-        # However, it is still not available in Rails 5.2.x.
-        true
+      include Ratonvirus::Storage::Support::IoHandling
+
+      def changed?(record, attribute)
+        resource = record.public_send attribute
+        !resource.record.attachment_changes[resource.name].nil?
       end
 
       def accept?(resource)
@@ -25,70 +15,94 @@ module Ratonvirus
           resource.is_a?(::ActiveStorage::Attached::Many)
       end
 
-      def process(resource, &_block)
+      def process(resource, &block)
         return unless block_given?
         return if resource.nil?
-
         return unless resource.attached?
 
-        if resource.is_a?(::ActiveStorage::Attached::One)
-          yield processable(resource.attachment) if resource.attachment
-        elsif resource.is_a?(::ActiveStorage::Attached::Many)
-          resource.attachments.each do |attachment|
-            yield processable(attachment)
-          end
+        change = resource.record.attachment_changes[resource.name]
+
+        case change
+        when ::ActiveStorage::Attached::Changes::CreateOne
+          handle_create_one(change, &block)
+        when ::ActiveStorage::Attached::Changes::CreateMany
+          handle_create_many(change, &block)
         end
       end
 
       def asset_path(asset, &block)
         return unless block_given?
-        return if asset.nil?
-        return unless asset.blob
+        return unless asset.is_a?(Array)
 
-        blob_path asset.blob, &block
+        ext = asset[0].filename.extension_with_delimiter
+        case asset[1]
+        when ActionDispatch::Http::UploadedFile, Rack::Test::UploadedFile
+          # These files should be already locally stored but their permissions
+          # can prevent the virus scanner executable from accessing them.
+          # Therefore, a temporary file is created for them as well.
+          io_path(asset[1], ext, &block)
+        when Hash
+          io = asset[1].fetch(:io)
+          io_path(io, ext, &block) if io
+        when ::ActiveStorage::Blob
+          asset[1].open do |tempfile|
+            prepare_for_scanner tempfile.path
+            yield tempfile.path
+          end
+        end
       end
 
+      # This is actually only required for the dyncamic blob uploads but for
+      # consistency, it is handled for all the cases accordingly either by
+      # closing the tempfile of the upload which also removes the file when
+      # called with the bang method. For the IO references, the IO is closed
+      # which should trigger the file deletion by latest at the Rack or Ruby
+      # level during garbage collection. There is no guarantee that the file
+      # for which the IO was opened would be deleted beause the IO itself is
+      # not necessarily associated with an actual file.
       def asset_remove(asset)
-        asset.purge
+        return unless asset.is_a?(Array)
+
+        case asset[1]
+        when ActionDispatch::Http::UploadedFile, Rack::Test::UploadedFile
+          # This removes the temp file from the system.
+          asset[1].tempfile.close!
+        when Hash
+          # No guarantee all references for the file are deleted.
+          io = asset[1].fetch(:io)
+          io.close
+        when ::ActiveStorage::Blob
+          # This deletes the dynamically uploaded blobs that might not be
+          # associated with any record at this point. This ensures the blobs are
+          # not left "hanging" in the storage system and the database in case
+          # automatic file deletion is applied.
+          asset[1].purge
+        end
       end
 
       private
 
-      # This creates a local copy of the blob for the scanning process. A
-      # local copy is needed for processing because the actual blob may be
-      # stored at a remote storage service (such as Amazon S3), meaning it
-      # cannot be otherwise processed locally.
-      #
-      # NOTE:
-      # Later implementations of Active Storage have the blob.open method that
-      # provides similar functionality. However, Rails 5.2.x still does not
-      # include this functionality, so we need to take care of it ourselves.
-      #
-      # This was introduced in the following commit:
-      # https://github.com/rails/rails/commit/ee21b7c2eb64def8f00887a9fafbd77b85f464f1
-      #
-      # SEE:
-      # https://edgeguides.rubyonrails.org/active_storage_overview.html#downloading-files
-      def blob_path(blob)
-        tempfile = Tempfile.open(
-          ["Ratonvirus", blob.filename.extension_with_delimiter],
-          tempdir
-        )
+      def handle_create_one(change, &block)
+        yield_processable_from(change, &block)
+      end
 
-        begin
-          tempfile.binmode
-          blob.download { |chunk| tempfile.write(chunk) }
-          tempfile.flush
-          tempfile.rewind
-
-          yield tempfile.path
-        ensure
-          tempfile.close!
+      def handle_create_many(change, &block)
+        change.send(:subchanges).each do |subchange|
+          yield_processable_from(subchange, &block)
         end
       end
 
-      def tempdir
-        Dir.tmpdir
+      def yield_processable_from(change, &_block)
+        attachable = change.attachable
+        return unless attachable
+        return if attachable.is_a?(::ActiveStorage::Blob)
+
+        # If the attachable is a string, it is a reference to an already
+        # existing blob. This can happen e.g. when the file blob is uploaded
+        # dynamically before the form is submitted.
+        attachable = change.attachment.blob if attachable.is_a?(String)
+
+        yield processable([change.attachment, attachable])
       end
     end
   end

@@ -35,13 +35,11 @@ describe Ratonvirus::Storage::Base do
 
       context "with non-array resource" do
         before do
-          expect(resource).to receive(:is_a?).with(Array)
-            .ordered.and_return(false)
+          expect(resource).to receive(:is_a?).with(Array).ordered.and_return(false)
         end
 
         it "passes the resource to processable and yields" do
-          expect(subject).to receive(:processable).with(resource)
-            .ordered.and_return(processable)
+          expect(subject).to receive(:processable).with(resource).ordered.and_return(processable)
 
           expect { |b| subject.process(resource, &b) }
             .to yield_with_args(processable)
@@ -107,8 +105,9 @@ describe Ratonvirus::Storage::Base do
     let(:processable) { double }
 
     it "calls Processable.new with correct arguments" do
-      expect(Ratonvirus::Processable).to receive(:new)
+      allow(Ratonvirus::Processable).to receive(:new)
         .with(subject, asset).and_return(processable)
+      expect(Ratonvirus::Processable).to receive(:new).with(subject, asset)
 
       expect(method.call(asset)).to equal(processable)
     end

@@ -7,7 +7,8 @@ group :development, :test do
 end
 
 group :test do
-  gem "codecov", require: false
+  gem "simplecov"
+  gem "simplecov-cobertura"
 end
 
 gemspec

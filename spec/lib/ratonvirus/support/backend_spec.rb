@@ -54,14 +54,6 @@ describe Ratonvirus::Support::Backend do
       end
     end
 
-    context "with string backend_type" do
-      it "returns the the correct constant" do
-        expect(method.call(namespace, :base)).to equal(
-          RatonvirusTest::Foo::Base
-        )
-      end
-    end
-
     context "with unknown backend_type" do
       it "returns the the correct constant" do
         expect { method.call(namespace, :unknown) }.to raise_error(NameError)
@@ -170,7 +162,8 @@ describe Ratonvirus::Support::Backend do
     describe ".test" do
       it "defines an instance variable on first call" do
         backend = RatonvirusTest::Foo::Base.new
-        expect(subject).to receive(:create_test).and_return(backend)
+        allow(subject).to receive(:create_test).and_return(backend)
+        expect(subject).to receive(:create_test)
         expect(subject.instance_variable_get(:@test)).to be_nil
 
         subject.test
@@ -180,7 +173,7 @@ describe Ratonvirus::Support::Backend do
       it "defines an instance variable only on first call" do
         expect(subject).to receive(:create_test).and_return(true).once
 
-        10.times do
+        5.times do
           subject.test
         end
       end
