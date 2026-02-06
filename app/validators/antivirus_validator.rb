@@ -2,7 +2,7 @@
 
 class AntivirusValidator < ActiveModel::EachValidator
   def validate_each(record, attribute, value)
-    target_attribute = options[:on] || attribute
+    target_attribute = options[:for] || attribute
 
     # Avoid unnecessary scans in case
     # a) the storage backend does not accept the resource
